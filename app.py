@@ -5,6 +5,7 @@ from flask import Flask, make_response,request,redirect,url_for,jsonify,session
 from flask_cors import CORS
 #from flask_session import Session #security layer
 from flask_bcrypt import Bcrypt
+from werkzeug.middleware.proxy_fix import ProxyFix
 import re
 from otp import genotp
 from cmail import send_mail
@@ -30,9 +31,10 @@ client = razorpay.Client(auth=("rzp_test_SzppdEzy51SPYd", "ZXV3p1lSRtZFXpt9wXac4
 from werkzeug.utils import secure_filename #used to check secured filenames or not
 import os
 
-mydb=connection.MySQLConnection(user='root',host='localhost',password='prasanna',db='ecom14db')
+mydb=connection.MySQLConnection(user='flaskuser',host='localhost',password='password',db='ecomdb')
 
 app = Flask(__name__)
+app.wsgi_app=ProxyFix(app.wsgi_app,x_proto=1,x_host=1)
 
 UPLOAD_FOLDER = "static/uploads"
 
