@@ -1913,7 +1913,7 @@ def get_reviews(itemid):
         if cursor:
             cursor.close()
 
-from utils.stoken import endata
+from stoken import endata
 
 
 @app.route('/api/forgotpassword', methods=['POST'])
