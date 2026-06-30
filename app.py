@@ -1,8 +1,10 @@
 import sys
 import uuid
+
 sys.dont_write_bytecode = True
 from flask import Flask, make_response,request,redirect,url_for,jsonify,session
 from flask_cors import CORS
+from werkzeug.middleware.proxy_fix import ProxyFix
 #from flask_session import Session #security layer
 from flask_bcrypt import Bcrypt
 import re
@@ -28,34 +30,51 @@ import razorpay
 client = razorpay.Client(auth=("rzp_test_SzppdEzy51SPYd", "ZXV3p1lSRtZFXpt9wXac4kI8"))
 
 from werkzeug.utils import secure_filename #used to check secured filenames or not
+from werkzeug.middleware.proxy_fix import ProxyFix
 import os
 
-mydb=connection.MySQLConnection(user='root',host='localhost',password='prasanna',db='ecom14db')
+mydb=connection.MySQLConnection(user='flaskuser',host='localhost',password='password',db='ecom14db')
 
 app = Flask(__name__)
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
-
-
+# app.wsgi_app=ProxyFix(app.wsgi_app,x_proto=1,x_host=1)
+app.wsgi_app = ProxyFix(
+    app.wsgi_app,
+    x_for=1,
+    x_proto=1,
+    x_host=1
+)
 UPLOAD_FOLDER = "static/uploads"
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+ALLOWED_EXTENSIONS={"png","jpeg","jpg","gif","webp","jfif"}
+MAX_CONTENT_LENGTH=6 *1024*1024 #6MB
+app.config['UPLOAD_FOLDER']=UPLOAD_FOLDER
 
 app.secret_key = "Code123"
 
-app.config["SESSION_COOKIE_SECURE"] = False
+app.config["SESSION_COOKIE_SECURE"] = True
+# app.config["SESSION_COOKIE_SECURE"] = False
 app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = None
+# app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SAMESITE"] = "None"
 
 app.permanent_session_lifetime = timedelta(days=1)
-
+app.config['PREFERED_URL_SCHEME']='https'
 CORS(
     app,
-    supports_credentials=True,
-    origins=["http://localhost:5173"]
+    origins=[
+        "https://ecommerce-admin-user-five.vercel.app","http://localhost:5173"
+    ],
+    supports_credentials=True
 )
 
+
 bcrypt=Bcrypt(app)
+
+@app.route("/")
+def home():
+    return "Flask Backend Running Successfully"
 @app.route('/api/admin/register',methods=['POST'])
 def admincreate():
     try:
@@ -185,7 +204,8 @@ def adminlogin():
     }
 })
 
-        print("RESPONSE HEADERS =", response.headers)
+        print("FINAL SESSION =", dict(session))
+        print("FINAL RESPONSE HEADERS =", response.headers)
 
         return response, 200
             
@@ -798,84 +818,210 @@ def userlogin():
         session['userid'] = userid
         session['useremail'] = useremail
 
-        print("USER LOGIN SESSION =", session)
-        return jsonify({'status':'success','message':'Login successful','user':{'userid':userid,'username':username,'useremail':useremail}}),200
+        print("USER LOGIN SESSION =", dict(session))
+        print("USER LOGIN COOKIES =", request.cookies)
+
+        response = jsonify({
+            'status': 'success',
+            'message': 'Login successful',
+            'user': {
+                'userid': userid,
+                'username': username,
+                'useremail': useremail
+            }
+        })
+
+        # TEMP TEST COOKIE
+        # response.set_cookie(
+        #     "mytest",
+        #     "12345",
+        #     secure=False,
+        #     httponly=False
+        # )
+
+        print("RESPONSE HEADERS =", response.headers)
+
+        return response, 200
     except Exception as e:
         print('Mysql Error:',str(e))
         return jsonify({'status':'failed','message':str(e)}),500
     finally:
         if cursor:
             cursor.close()
+            
 @app.route('/api/user/logout', methods=['POST'])
-def userlogout():
+def logout():
     try:
-        # remove user session values
-        session.pop('userid', None)
-        session.pop('useremail', None)
+        # check user logged in or not
+        if 'userid' not in session:
+            return jsonify({
+                'status': 'failed',
+                'message': 'pls login first'
+            }), 401
 
-        # optional: clear all session
-        # session.clear()
+        # debug (optional)
+        print("BEFORE LOGOUT SESSION =", dict(session))
+
+        # clear complete session
+        session.clear()
+
+        # debug (optional)
+        print("AFTER LOGOUT SESSION =", dict(session))
 
         return jsonify({
             'status': 'success',
-            'message': 'User logout successful'
+            'message': 'Logout successful'
         }), 200
 
     except Exception as e:
-        print("Logout Error:", str(e))
+        print("LOGOUT ERROR =", str(e))
         return jsonify({
             'status': 'failed',
             'message': str(e)
-        }), 500            
-@app.route('/api/cart/add',methods=['POST'])
+        }), 500
+
+@app.route('/api/cart/add', methods=['POST'])
 def addcart():
-    cursor=None
+
+    print("******** ADD CART API CALLED ********")
+
+    cursor = None
     try:
-        #login check
-        print(session)
-        if 'userid' not in session:
-            return jsonify({'status':'failed','message':'pls login first'}),401
-        data=request.get_json()
+        print("========== ADD CART ROUTE HIT ==========")
+
+        # Debug incoming request
+        print("REQUEST COOKIES =", request.cookies)
+        print("SESSION DATA =", dict(session))
+        print("REQUEST HEADERS =", dict(request.headers))
+
+        # Check login session
+        if "userid" not in session:
+            print("USERID NOT FOUND IN SESSION")
+
+            return jsonify({
+                "status": "failed",
+                "message": "pls login first"
+            }), 401
+
+        print("USERID FOUND =", session.get("userid"))
+
+        # Get request data
+        data = request.get_json()
+
         if not data:
-            return jsonify({'status':'failed','message':'No input data'}),400
-        itemid=data.get('itemid')
-        quantity=int(data.get('quantity',1))
-        print(quantity)
+            return jsonify({
+                "status": "failed",
+                "message": "No input data"
+            }), 400
+
+        itemid = data.get("itemid")
+        quantity = int(data.get("quantity", 1))
+
+        print("ITEMID =", itemid)
+        print("QUANTITY =", quantity)
+
         if not itemid:
-            return jsonify({'status':'failed','message':'Itemid required'}),400
+            return jsonify({
+                "status": "failed",
+                "message": "Itemid required"
+            }), 400
+
+        # DB reconnect
         mydb.ping(reconnect=True)
-        cursor=mydb.cursor(buffered=True)
-        userid=session.get('userid')
-        #check item exists
-        cursor.execute('''select quantity from items where itemid=uuid_to_bin(%s)''',[itemid])
-        item_quantity=cursor.fetchone()
+        cursor = mydb.cursor(buffered=True)
+
+        userid = session.get("userid")
+
+        # Check item exists
+        cursor.execute(
+            "SELECT quantity FROM items WHERE itemid=uuid_to_bin(%s)",
+            [itemid]
+        )
+
+        item_quantity = cursor.fetchone()
+
         if not item_quantity:
-            return jsonify({'status':'failed','message':'Item not found'}),404
-        available_stock=item_quantity[0]
+            return jsonify({
+                "status": "failed",
+                "message": "Item not found"
+            }), 404
+
+        available_stock = item_quantity[0]
+
         if quantity > available_stock:
-            return jsonify({'status':'failed','message':'Insufficient stock'}),400
-        #already in cart?
-        cursor.execute('''select quantity from cart where userid=uuid_to_bin(%s) and itemid=uuid_to_bin(%s)''',[userid,itemid])
-        existing_cart=cursor.fetchone()
-        #update quantity
+            return jsonify({
+                "status": "failed",
+                "message": "Insufficient stock"
+            }), 400
+
+        # Check existing cart
+        cursor.execute(
+            '''
+            SELECT quantity FROM cart
+            WHERE userid=uuid_to_bin(%s)
+            AND itemid=uuid_to_bin(%s)
+            ''',
+            [userid, itemid]
+        )
+
+        existing_cart = cursor.fetchone()
+
+        # Update existing cart
         if existing_cart:
-            new_quantity=existing_cart[0]+quantity
+            new_quantity = existing_cart[0] + quantity
+
             if new_quantity > available_stock:
-                return jsonify({'status':'failed','message':'Insufficient stock'}),400
-            cursor.execute('''update cart set quantity=%s where itemid=uuid_to_bin(%s) and userid=uuid_to_bin(%s)''',[new_quantity,itemid,userid] )
-            message='Cart qunatity updated'
+                return jsonify({
+                    "status": "failed",
+                    "message": "Insufficient stock"
+                }), 400
+
+            cursor.execute(
+                '''
+                UPDATE cart
+                SET quantity=%s
+                WHERE itemid=uuid_to_bin(%s)
+                AND userid=uuid_to_bin(%s)
+                ''',
+                [new_quantity, itemid, userid]
+            )
+
+            message = "Cart quantity updated"
+
+        # Insert new cart
         else:
-            cursor.execute('insert into cart(cartid,itemid,userid,quantity) values(uuid_to_bin(uuid()),uuid_to_bin(%s),uuid_to_bin(%s),%s)',[itemid,userid,quantity])
-            message='Item added to Cart'
+            cursor.execute(
+                '''
+                INSERT INTO cart(cartid,itemid,userid,quantity)
+                VALUES(uuid_to_bin(uuid()),uuid_to_bin(%s),uuid_to_bin(%s),%s)
+                ''',
+                [itemid, userid, quantity]
+            )
+
+            message = "Item added to Cart"
+
         mydb.commit()
-        return jsonify({'status':'success','message':message}),200
+
+        return jsonify({
+            "status": "success",
+            "message": message
+        }), 200
+
     except Exception as e:
-        mydb.rollback()
-        print("Mysql Error",str(e))
-        return jsonify({'status':'failed','message':str(e)}),500
+        print("MYSQL ERROR =", str(e))
+
+        if mydb:
+            mydb.rollback()
+
+        return jsonify({
+            "status": "failed",
+            "message": str(e)
+        }), 500
+
     finally:
         if cursor:
-            cursor.close()        
+            cursor.close() 
+                         
 @app.route('/api/cart/view',methods=['GET'])
 def viewcart():
     cursor=None
@@ -1444,7 +1590,7 @@ def myorder_details(ordid):
 
         if cursor:
             cursor.close()
-@app.route('/api/invoice/<int:ord_id>',methods=['GET'])
+@app.route('/api/invoice/<ord_id>',methods=['GET'])
 def get_invoice(ord_id):
     cursor=None
     try:
@@ -1521,7 +1667,7 @@ def get_invoice(ord_id):
         pdf_buffer.seek(0)
         #--------------RESPONSE------------
         response=make_response(pdf_buffer.getvalue())
-        response.headers['Content-Type']='application.pdf'
+        response.headers['Content-Type']='application/pdf'
         response.headers['Content-Disposition']=(
             f'attachment; filename=invoice_{ord_id}.pdf'
         )
@@ -1529,7 +1675,7 @@ def get_invoice(ord_id):
     except Exception as e:
         print(f'Invoice Error:',e)
         return jsonify({'status':'failed','message':str(e)}),500
-    else:
+    finally:
         if cursor:
             cursor.close()
             
@@ -1761,7 +1907,7 @@ def get_reviews(itemid):
         if cursor:
             cursor.close()
 
-from stoken import endata
+from utils.stoken import endata
 
 
 @app.route('/api/forgotpassword', methods=['POST'])
@@ -1770,7 +1916,6 @@ def forgotpassword():
     cursor = None
 
     try:
-
         data = request.get_json()
 
         if not data:
@@ -1788,7 +1933,6 @@ def forgotpassword():
             }), 400
 
         mydb.ping(reconnect=True)
-
         cursor = mydb.cursor(buffered=True)
 
         cursor.execute(
@@ -1802,38 +1946,40 @@ def forgotpassword():
 
         count_email = cursor.fetchone()
 
-        if count_email[0] == 1:
-
-            token = endata(f_email)
-
-            # frontend route
-            reset_link = (
-                f"http://localhost:5173/"
-                f"reset-password/{token}"
-            )
-
-            subject = "Reset Password Link"
-
-            body = (
-                f"Click below link to reset password:\n\n"
-                f"{reset_link}"
-            )
-
-            send_mail(
-                to=f_email,
-                subject=subject,
-                body=body
-            )
-
+        if count_email[0] != 1:
             return jsonify({
-                "status": "success",
-                "message": "Reset link sent successfully"
-            }), 200
+                "status": "failed",
+                "message": "Email not found"
+            }), 404
+
+        # IMPORTANT FIX
+        token = endata({
+            "email": f_email
+        })
+
+        # PRODUCTION URL
+        reset_link = (
+            f"https://ecommerce-admin-user-five.vercel.app/"
+            f"reset-password/{token}"
+        )
+
+        subject = "Reset Password"
+
+        body = (
+            f"Click below link to reset password:\n\n"
+            f"{reset_link}"
+        )
+
+        send_mail(
+            f_email,
+            subject,
+            body
+        )
 
         return jsonify({
-            "status": "failed",
-            "message": "Email not found"
-        }), 404
+            "status": "success",
+            "message": "Reset link sent successfully"
+        }), 200
 
     except Exception as e:
 
@@ -1846,52 +1992,216 @@ def forgotpassword():
 
     finally:
         if cursor:
-            cursor.close()            
-           
+            cursor.close()  
+               
 @app.route('/api/resetpassword/<token>', methods=['POST'])
 def resetpassword(token):
 
-    data = request.get_json()
-
-    npassword = data.get('password')
-    cpassword = data.get('confirm_password')
-
-    if npassword != cpassword:
-        return {
-            "status": "error",
-            "message": "Passwords do not match"
-        }, 400
+    cursor = None
 
     try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                "status": "failed",
+                "message": "No input data"
+            }), 400
+
+        npassword = data.get("password")
+        cpassword = data.get("confirm_password")
+
+        if npassword != cpassword:
+            return jsonify({
+                "status": "failed",
+                "message": "Passwords do not match"
+            }), 400
 
         decoded = dndata(token)
+
         email = decoded["email"]
+
         hashed_pwd = bcrypt.generate_password_hash(
             npassword
         ).decode("utf-8")
+
+        mydb.ping(reconnect=True)
         cursor = mydb.cursor(buffered=True)
 
         cursor.execute(
-            'update userdata set userpassword=%s where useremail=%s',
+            '''
+            UPDATE userdata
+            SET userpassword=%s
+            WHERE useremail=%s
+            ''',
             [hashed_pwd, email]
         )
 
         mydb.commit()
 
-        return {
+        return jsonify({
             "status": "success",
             "message": "Password updated successfully"
-        }, 200
+        }), 200
 
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Invalid or expired token,{str(e)}"
-        }, 400
+
+        print("RESET PASSWORD ERROR =", str(e))
+
+        return jsonify({
+            "status": "failed",
+            "message": f"Invalid token or expired token: {str(e)}"
+        }), 400
+
     finally:
         if cursor:
             cursor.close()
+                   
+@app.route('/api/admin/forgotpassword', methods=['POST'])
+def adminforgotpassword():
 
+    cursor = None
+
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                "status": "failed",
+                "message": "No input data"
+            }), 400
+
+        a_email = data.get("email")
+
+        if not a_email:
+            return jsonify({
+                "status": "failed",
+                "message": "Email required"
+            }), 400
+
+        mydb.ping(reconnect=True)
+        cursor = mydb.cursor(buffered=True)
+
+        cursor.execute(
+            '''
+            SELECT count(*)
+            FROM admindata
+            WHERE admin_useremail=%s
+            ''',
+            [a_email]
+        )
+
+        count_email = cursor.fetchone()
+
+        if count_email[0] != 1:
+            return jsonify({
+                "status": "failed",
+                "message": "Email not found"
+            }), 404
+
+        token = endata({
+            "admin_email": a_email
+        })
+
+        reset_link = (
+            f"https://ecommerce-admin-user-five.vercel.app/"
+            f"admin-reset-password/{token}"
+        )
+
+        subject = "Admin Reset Password"
+
+        body = (
+            f"Click below link to reset password:\n\n"
+            f"{reset_link}"
+        )
+
+        send_mail(
+            a_email,
+            subject,
+            body
+        )
+
+        return jsonify({
+            "status": "success",
+            "message": "Reset link sent successfully"
+        }), 200
+
+    except Exception as e:
+
+        print("ADMIN FORGOT PASSWORD ERROR =", str(e))
+
+        return jsonify({
+            "status": "failed",
+            "message": str(e)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+            
+@app.route('/api/admin/resetpassword/<token>', methods=['POST'])
+def adminresetpassword(token):
+
+    cursor = None
+
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                "status": "failed",
+                "message": "No input data"
+            }), 400
+
+        password = data.get("password")
+        confirm = data.get("confirm_password")
+
+        if password != confirm:
+            return jsonify({
+                "status": "failed",
+                "message": "Passwords do not match"
+            }), 400
+
+        decoded = dndata(token)
+
+        email = decoded["admin_email"]
+
+        hashed_pwd = bcrypt.generate_password_hash(
+            password
+        ).decode("utf-8")
+
+        mydb.ping(reconnect=True)
+        cursor = mydb.cursor(buffered=True)
+
+        cursor.execute(
+            '''
+            UPDATE admindata
+            SET admin_password=%s
+            WHERE admin_useremail=%s
+            ''',
+            [hashed_pwd, email]
+        )
+
+        mydb.commit()
+
+        return jsonify({
+            "status": "success",
+            "message": "Password updated successfully"
+        }), 200
+
+    except Exception as e:
+
+        print("ADMIN RESET PASSWORD ERROR =", str(e))
+
+        return jsonify({
+            "status": "failed",
+            "message": f"Invalid token or expired token: {str(e)}"
+        }), 400
+
+    finally:
+        if cursor:
+            cursor.close()
+            
 @app.route('/api/category/<ctype>', methods=['GET'])
 def category(ctype):
     cursor = None
@@ -1930,7 +2240,15 @@ def category(ctype):
         if cursor:
             cursor.close()            
             
-                       
+@app.route("/check-cookie")
+def check_cookie():
+    print("CHECK COOKIE =", request.cookies)
+    print("CHECK SESSION =", dict(session))
+    return jsonify({
+        "cookies": dict(request.cookies),
+        "session": dict(session)
+    })                       
         
-if __name__=='__main__':
+if __name__ == "__main__":
+    # app.run(host="localhost", port=5000, debug=True)
     app.run()
