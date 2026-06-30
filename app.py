@@ -61,14 +61,20 @@ app.config["SESSION_COOKIE_SAMESITE"] = "None"
 
 app.permanent_session_lifetime = timedelta(days=1)
 app.config['PREFERED_URL_SCHEME']='https'
+from flask_cors import CORS
+
 CORS(
     app,
-    origins=[
-        "https://ecommerce-admin-user-five.vercel.app","http://localhost:5173"
-    ],
+    resources={
+        r"/api/*": {
+            "origins": [
+                "http://localhost:5173",
+                "https://ecommerce-admin-user-main.vercel.app"
+            ]
+        }
+    },
     supports_credentials=True
 )
-
 
 bcrypt=Bcrypt(app)
 
