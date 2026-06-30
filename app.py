@@ -61,7 +61,7 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 app.permanent_session_lifetime = timedelta(days=1)
 app.config['PREFERED_URL_SCHEME']='https'
-from flask_cors import CORS
+
 
 CORS(
     app,
